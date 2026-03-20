@@ -1,0 +1,41 @@
+# Игнорируемые директории
+/node_modules/
+/.idea/
+/vendor/
+/bin/
+/build/
+/dist/
+/.vscode/
+/.vs/
+/.venv/
+/app/output/
+*__pycache__
+
+# Игнорируемые файлы
+*.log
+*.tmp
+*.swp
+*.DS_Store
+*.env
+*.env.local
+*.bak
+
+# Игнорируемые файлы сборки/зависимостей
+package-lock.json  # (если используете yarn.lock)
+yarn-error.log
+composer.lock
+
+# Игнорируемые пользовательские настройки
+.htaccess
+*.sublime-workspace
+
+# Игнорируемые бинарные файлы
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Игнорируемые файлы операционных систем
+Thumbs.db
+ehthumbs.db
+Desktop.ini
