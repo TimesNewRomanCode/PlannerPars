@@ -1,4 +1,5 @@
 import asyncio
+import io
 import re
 import os
 from pathlib import Path
@@ -9,9 +10,8 @@ import pdfplumber
 from lxml import html
 from PIL import Image, ImageDraw, ImageFont
 
-from app.core.database import AsyncSessionLocal
-from app.repositories import address_repository
-from app.services.services_for_models.groups import update_groups
+from app.core.config import settings
+from app.core.s3 import s3
 
 
 class AAGParser:
@@ -110,7 +110,7 @@ class AAGParser:
 
         return schedules
 
-    def render_image(self, data, group_name, output_path):
+    def render_image(self, data, group_name):
         margin = 30
         row_height = 80
         header_height = 70
@@ -165,63 +165,71 @@ class AAGParser:
                 x += w
             y += row_height
 
-        img.save(output_path)
+        return img
+
+    def upload_to_s3(self, image, site_folder, day_month, group):
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
+
+
+        site_slug = site_folder.lower().replace(" ", "-").replace(".", "")
+
+        s3_key = f"ААГ/{site_folder}/{day_month}/{group}.png"
+
+        s3.put_object(
+            Bucket=settings.S3_BUCKET,
+            Key=s3_key,
+            Body=buffer,
+            ContentType="image/png",
+        )
+
+        print(f"[S3] Загружено: {s3_key}")
+
+        return s3_key
 
     async def run(self):
         session = requests.Session()
         session.headers.update({"User-Agent": "Mozilla/5.0"})
-        # todo запрос на получение всех адресов с названиями из addresses
-        async with AsyncSessionLocal() as session_db:
-            address_objects = await address_repository.get_address_by_college(
-                session_db, college_name="ААГ"
-            )
-            name_address_map = {
-                address.name: address.sid for address in address_objects
-            }
-            for site_folder, url in self.SITES.items():
 
-                pdf_links = self.get_pdf_links(url, session)
-                if not pdf_links:
-                    print("Нет PDF на ближайшие 5 дней")
-                    continue
+        for site_folder, url in self.SITES.items():
 
-                for pdf_url, day in pdf_links:
-                    print(f"[INFO] Обработка {pdf_url}")
+            pdf_links = self.get_pdf_links(url, session)
+            if not pdf_links:
+                print("Нет PDF на ближайшие 5 дней")
+                continue
 
-                    target_date = self.TODAY.replace(day=day)
-                    if day < self.TODAY.day:
-                        target_date = target_date + timedelta(days=30)
+            for pdf_url, day in pdf_links:
+                print(f"[INFO] Обработка {pdf_url}")
 
-                    day_month = f"{target_date.day}{target_date.month:02d}"
+                target_date = self.TODAY.replace(day=day)
+                if day < self.TODAY.day:
+                    target_date = target_date + timedelta(days=30)
 
-                    save_dir = self.ROOT_SAVE_DIR / site_folder / day_month
-                    save_dir.mkdir(parents=True, exist_ok=True)
+                day_month = f"{target_date.day}{target_date.month:02d}"
 
-                    file_name = pdf_url.split("/")[-1]
-                    response = session.get(pdf_url, timeout=(5, 60))
+                file_name = pdf_url.split("/")[-1]
+                response = session.get(pdf_url, timeout=(5, 60))
 
-                    with open(file_name, "wb") as f:
-                        f.write(response.content)
+                with open(file_name, "wb") as f:
+                    f.write(response.content)
 
-                    schedules = self.parse_pdf_once(file_name)
-                    GROUP_NAMES = list(schedules)
+                schedules = self.parse_pdf_once(file_name)
 
-                    await update_groups(
-                        session=session_db,
-                        groups=GROUP_NAMES,
-                        address_sid=name_address_map.get(site_folder),
-                    )
-                    await session_db.commit()
+                print(f"[INFO] Найдено групп: {len(schedules)}")
 
-                    print(f"[INFO] Найдено групп: {len(schedules)}")
+                for group, schedule in schedules.items():
+                    if schedule:
+                        img = self.render_image(schedule, group)
 
-                    for group, schedule in schedules.items():
-                        if schedule:
-                            self.render_image(
-                                schedule, group, save_dir / f"{group}.png"
-                            )
+                        self.upload_to_s3(
+                            image=img,
+                            site_folder=site_folder,
+                            day_month=day_month,
+                            group=group,
+                        )
 
-                    os.remove(file_name)
+                os.remove(file_name)
 
 
 parse_aag = AAGParser()

@@ -1,20 +1,20 @@
-import shutil
-from openpyxl import load_workbook, Workbook
-from copy import copy
+import asyncio
 import os
 import subprocess
-from pdf2image import convert_from_path
-import requests
-from datetime import datetime, timedelta
-from openpyxl.styles import Border, Side
+import io
 import re
+import requests
+
+from datetime import datetime, timedelta
+from copy import copy
+
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Border, Side
+from pdf2image import convert_from_path
 import xlrd
 
 from app.core.config import settings
-from app.core.create_bot import bot
-from app.repositories import address_repository
-from app.services.services_for_models.groups import update_groups
-from app.core.database import AsyncSessionLocal
+from app.core.s3 import s3
 
 
 class ParsAask:
@@ -25,32 +25,32 @@ class ParsAask:
         today = datetime.now()
         if today.weekday() == 6:
             today += timedelta(days=1)
+
         i = 0
+
         while True:
             try:
                 target_day = today + timedelta(days=i)
                 day_month = int(target_day.strftime("%d%m"))
+
                 if manual_url:
                     url = manual_url
                     manual_url = None
                 else:
                     url = f"https://altask.ru/images/raspisanie/DO/{day_month}.xls"
-                response = requests.get(url)
-                if response.status_code != 200 and i == 0:
-                    raise Exception(
-                        await bot.send_message(
-                            chat_id=settings.YOUR_CHAT_ID,
-                            text=f"Не удалось скачать файл по ссылке: {url}",
-                        )
-                    )
-                else:
-                    file_path = f"{day_month}.xls"
-                    with open(file_path, "wb") as f:
-                        f.write(response.content)
 
-                    await self.extract_group_names_from_xls(file_path)
-                i += 1
+                response = requests.get(url)
+
+                file_path = f"{day_month}.xls"
+                with open(file_path, "wb") as f:
+                    f.write(response.content)
+
+                await self.extract_group_names_from_xls(file_path)
+
                 self.parse_and_generate_tables(file_path, day_month)
+
+                i += 1
+
             except Exception:
                 break
 
@@ -60,37 +60,26 @@ class ParsAask:
 
         workbook = xlrd.open_workbook(file_path)
         sheet = workbook.sheet_by_index(0)
+
         for y in range(sheet.nrows):
             for x in range(sheet.ncols):
                 value = str(sheet.cell_value(y, x)).strip()
                 if group_pattern.match(value):
                     group_names.add(value)
 
-        sorted_group_names = sorted(group_names, key=lambda x: x.lower())
+        self.GROUP_NAMES = sorted(group_names, key=lambda x: x.lower())
 
-
-        self.GROUP_NAMES = list(sorted_group_names)
-
-        async with AsyncSessionLocal() as session:
-            address = await address_repository.get_address_by_name(session, address_name="пр.Ленина 68")
-            await update_groups(
-                session=session, groups=self.GROUP_NAMES, address_sid=address.sid)
-
-        return print(f"[INFO] Найдено групп: {len(self.GROUP_NAMES)} и добавлено в таблицу")
+        print(f"[INFO] Найдено групп: {len(self.GROUP_NAMES)}")
 
     @staticmethod
     def convert_xls_to_xlsx(input_path):
         try:
-            output_dir = os.path.dirname(os.path.abspath(input_path))
-
             subprocess.run(
                 [
                     "libreoffice",
                     "--headless",
                     "--convert-to",
                     "xlsx",
-                    "--outdir",
-                    output_dir,
                     input_path,
                 ],
                 check=True,
@@ -102,34 +91,53 @@ class ParsAask:
 
     def read_xls_file(self, file_path):
         result = []
-        try:
-            workbook = xlrd.open_workbook(file_path)
-            sheet = workbook.sheet_by_index(0)
 
-            for y in range(sheet.nrows):
-                for x in range(sheet.ncols):
-                    value = sheet.cell_value(y, x)
-                    if value in self.GROUP_NAMES:
-                        ly = y + 1
-                        # изза субботы снизу ебанутой до 40 клеток вниз уходит, пока поставил ограничение 13
-                        while (
-                            ly - y < 13
-                            and ly < sheet.nrows
-                            and sheet.cell_value(ly, x) not in self.GROUP_NAMES
-                        ):
-                            ly += 1
-                        if ly >= sheet.nrows:
-                            ly = sheet.nrows - 1
-                        result.append({"group": value, "x": x, "y1": y + 1, "y2": ly})
-            return result
-        except Exception as e:
-            print(f"[!] Ошибка чтения .xls: {e}")
-            return None
+        workbook = xlrd.open_workbook(file_path)
+        sheet = workbook.sheet_by_index(0)
+
+        for y in range(sheet.nrows):
+            for x in range(sheet.ncols):
+                value = sheet.cell_value(y, x)
+
+                if value in self.GROUP_NAMES:
+                    ly = y + 1
+
+                    while (
+                        ly - y < 13
+                        and ly < sheet.nrows
+                        and sheet.cell_value(ly, x) not in self.GROUP_NAMES
+                    ):
+                        ly += 1
+
+                    if ly >= sheet.nrows:
+                        ly = sheet.nrows - 1
+
+                    result.append(
+                        {"group": value, "x": x, "y1": y + 1, "y2": ly}
+                    )
+
+        return result
 
     @staticmethod
-    def create_group_sheets_single_column(groups, source_sheet, output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+    def upload_image_to_s3(image, day_month, group_name):
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
 
+        s3_key = f"ААСК/пр.Ленина 68/{day_month}/{group_name}.png"
+
+        s3.put_object(
+            Bucket=settings.S3_BUCKET,
+            Key=s3_key,
+            Body=buffer,
+            ContentType="image/png",
+        )
+
+        print(f"[S3] Загружено: {s3_key}")
+
+        return s3_key
+
+    def create_group_sheets_single_column(self, groups, source_sheet, day_month):
         for group in groups:
             x = group["x"] + 1
             y1 = group["y1"]
@@ -139,37 +147,32 @@ class ParsAask:
             wb = Workbook()
             ws = wb.active
             ws.title = name
+
+            # 📥 копируем данные
             for row in range(y1, y2 + 1):
                 src_cell = source_sheet.cell(row=row, column=x)
                 tgt_cell = ws.cell(row=row - y1 + 1, column=4, value=src_cell.value)
 
                 if src_cell.has_style:
                     tgt_cell.font = copy(src_cell.font)
-                    current_border = src_cell.border
-                    mixed_border = Border(
+
+                    border = Border(
                         left=Side(style="medium"),
                         right=Side(style="medium"),
-                        # TODO
-                        top=(
-                            current_border.top
-                            if current_border.top
-                            else Side(style="thin", color="505050")
-                        ),
-                        bottom=(
-                            current_border.bottom
-                            if current_border.bottom
-                            else Side(style="thin", color="505050")
-                        ),
+                        top=src_cell.border.top or Side(style="thin"),
+                        bottom=src_cell.border.bottom or Side(style="thin"),
                     )
-                    tgt_cell.border = mixed_border
+
+                    tgt_cell.border = border
                     tgt_cell.fill = copy(src_cell.fill)
-                    tgt_cell.number_format = copy(src_cell.number_format)
-                    tgt_cell.protection = copy(src_cell.protection)
                     tgt_cell.alignment = copy(src_cell.alignment)
 
             col_letter_src = source_sheet.cell(row=y1, column=x).column_letter
+            src_width = source_sheet.column_dimensions[col_letter_src].width
+
             ws.column_dimensions["D"].width = max(
-                source_sheet.column_dimensions[col_letter_src].width, 33, 22
+                src_width if src_width else 20,
+                33,
             )
 
             for row in range(y1, y2 + 1):
@@ -178,8 +181,10 @@ class ParsAask:
                         source_sheet.row_dimensions[row].height
                     )
 
-            xlsx_path = os.path.join(output_dir, f"{name}.xlsx")
-            wb.save(xlsx_path)
+            temp_xlsx = f"{name}.xlsx"
+            temp_pdf = f"{name}.pdf"
+
+            wb.save(temp_xlsx)
 
             try:
                 subprocess.run(
@@ -188,55 +193,64 @@ class ParsAask:
                         "--headless",
                         "--convert-to",
                         "pdf",
-                        "--outdir",
-                        output_dir,
-                        xlsx_path,
+                        temp_xlsx,
                     ],
                     check=True,
                 )
-                pdf_path = os.path.join(output_dir, f"{name}.pdf")
 
-                images = convert_from_path(pdf_path, dpi=300)
-
-                # TODO tut obrezat
+                images = convert_from_path(temp_pdf, dpi=300)
 
                 if images:
                     img = images[0]
                     width, height = img.size
 
-                    crop_top = int(height * 0.00)  # обрезать % сверху
-                    crop_bottom = int(height * 0.10)  # обрезать % снизу
-                    crop_left = int(width * 0.15)  # обрезать % слева
-                    crop_right = int(width * 0.15)  # обрезать % справа
-
                     cropped = img.crop(
-                        (crop_left, crop_top, width - crop_right, height - crop_bottom)
+                        (
+                            int(width * 0.15),
+                            0,
+                            width - int(width * 0.3),
+                            height - int(height * 0.10),
+                        )
                     )
-                    cropped.save(os.path.join(output_dir, f"{name}.png"), "PNG")
-                os.remove(xlsx_path)
-                os.remove(pdf_path)
+
+                    self.upload_image_to_s3(cropped, day_month, name)
 
             except Exception as e:
-                print(f"[!] Ошибка при конвертации файлов для группы {name}: {e}")
-                continue
+                print(f"[!] Ошибка для группы {name}: {e}")
 
-        print(f"группы сохранены в {output_dir}")
+            finally:
+                if os.path.exists(temp_xlsx):
+                    os.remove(temp_xlsx)
+                if os.path.exists(temp_pdf):
+                    os.remove(temp_pdf)
 
-    def parse_and_generate_tables(self, INPUT_XLS, day_month):
-        output_dir = f"./app/grop_photo/ААСК/пр.Ленина 68/{day_month}"
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir)
-        self.convert_xls_to_xlsx(INPUT_XLS)
-        groups = self.read_xls_file(INPUT_XLS)
-        workbook = load_workbook(f"{INPUT_XLS}x")
+    def parse_and_generate_tables(self, input_xls, day_month):
+        self.convert_xls_to_xlsx(input_xls)
+
+        groups = self.read_xls_file(input_xls)
+
+        workbook = load_workbook(f"{input_xls}x")
         sheet = workbook.active
-        self.create_group_sheets_single_column(groups, sheet, output_dir)
-        if os.path.exists(INPUT_XLS):
-            os.remove(INPUT_XLS)
-            print(f"[INFO] Удален исходный файл: {INPUT_XLS}")
-        if os.path.exists(f"{INPUT_XLS}x"):
-            os.remove(f"{INPUT_XLS}x")
+
+        self.create_group_sheets_single_column(groups, sheet, day_month)
+
+        if os.path.exists(input_xls):
+            os.remove(input_xls)
+
+        if os.path.exists(f"{input_xls}x"):
+            os.remove(f"{input_xls}x")
+
+        print("[INFO] Обработка завершена")
+
         return True
 
 
 parse_aask = ParsAask()
+
+async def main():
+    parse_aask = ParsAask()
+    await parse_aask.download_and_generate_schedule()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
