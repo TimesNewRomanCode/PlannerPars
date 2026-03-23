@@ -15,6 +15,7 @@ import xlrd
 
 from app.core.config import settings
 from app.core.s3 import s3
+from app.router.group_router import send_group
 
 
 class ParsAask:
@@ -52,6 +53,8 @@ class ParsAask:
                 i += 1
 
             except Exception:
+                data = self.GROUP_NAMES
+                send_group(data)
                 break
 
     async def extract_group_names_from_xls(self, file_path):
@@ -68,6 +71,7 @@ class ParsAask:
                     group_names.add(value)
 
         self.GROUP_NAMES = sorted(group_names, key=lambda x: x.lower())
+
 
         print(f"[INFO] Найдено групп: {len(self.GROUP_NAMES)}")
 
@@ -246,11 +250,3 @@ class ParsAask:
 
 
 parse_aask = ParsAask()
-
-async def main():
-    parse_aask = ParsAask()
-    await parse_aask.download_and_generate_schedule()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

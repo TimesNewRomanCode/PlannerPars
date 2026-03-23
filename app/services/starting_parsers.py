@@ -12,16 +12,16 @@ class ParserWorker:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
 
-        self.aask_parser = ParsAask()
+        # self.aask_parser = ParsAask()
         self.aag_parser = AAGParser()
 
     async def run_all_parsers(self):
         print(f"[WORKER] Запуск парсеров: {datetime.now()}")
 
-        try:
-            await self.aask_parser.download_and_generate_schedule()
-        except Exception as e:
-            print(f"[ERROR] AASK: {e}")
+        # try:
+        #     await self.aask_parser.download_and_generate_schedule()
+        # except Exception as e:
+        #     print(f"[ERROR] AASK: {e}")
 
         try:
             await self.aag_parser.run()

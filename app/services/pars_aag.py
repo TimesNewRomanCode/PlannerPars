@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.core.config import settings
 from app.core.s3 import s3
+from app.router.group_router import send_group
 
 
 class AAGParser:
@@ -22,10 +23,11 @@ class AAGParser:
             "ул.Германа Титова 8": "https://altag.ru/student/schedule/rescheduling-3",
         }
 
+        self.GROUPS_NAME = []
+
         self.GROUP_REGEX = re.compile(r"[А-ЯA-ZА-яЁё]{1,3}[-–]?\d{2,4}")
 
         self.BASE_DIR = Path(__file__).resolve().parents[3]
-        self.ROOT_SAVE_DIR = self.BASE_DIR / "app" / "grop_photo" / "ААГ"
 
         self.TODAY = datetime.today()
 
@@ -74,6 +76,7 @@ class AAGParser:
 
                             if cell and self.GROUP_REGEX.fullmatch(cell.strip()):
                                 group = cell.strip().replace("–", "-")
+                                self.GROUPS_NAME.append(group)
                                 result = []
 
                                 subject_col = col
@@ -107,7 +110,6 @@ class AAGParser:
                                     r += 1
 
                                 schedules[group] = result
-
         return schedules
 
     def render_image(self, data, group_name):
@@ -172,9 +174,6 @@ class AAGParser:
         image.save(buffer, format="PNG")
         buffer.seek(0)
 
-
-        site_slug = site_folder.lower().replace(" ", "-").replace(".", "")
-
         s3_key = f"ААГ/{site_folder}/{day_month}/{group}.png"
 
         s3.put_object(
@@ -195,9 +194,6 @@ class AAGParser:
         for site_folder, url in self.SITES.items():
 
             pdf_links = self.get_pdf_links(url, session)
-            if not pdf_links:
-                print("Нет PDF на ближайшие 5 дней")
-                continue
 
             for pdf_url, day in pdf_links:
                 print(f"[INFO] Обработка {pdf_url}")
@@ -231,8 +227,16 @@ class AAGParser:
 
                 os.remove(file_name)
 
+            data = self.GROUPS_NAME
+
+            try:
+                send_group(data)
+                self.GROUPS_NAME = []
+
+            except Exception:
+                print("Не удалось отправить")
+                self.GROUPS_NAME = []
+
+
 
 parse_aag = AAGParser()
-
-if __name__ == "__main__":
-    asyncio.run(AAGParser().run())
