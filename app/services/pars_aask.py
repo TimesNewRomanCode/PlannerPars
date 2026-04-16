@@ -53,8 +53,8 @@ class ParsAask:
                 i += 1
 
             except Exception:
-                data = self.GROUP_NAMES
-                send_group(data)
+                groups_ary = list(set(self.GROUP_NAMES))
+                send_group(groups_ary, address_name="пр.Ленина 68")
                 break
 
     async def extract_group_names_from_xls(self, file_path):
@@ -152,7 +152,6 @@ class ParsAask:
             ws = wb.active
             ws.title = name
 
-            # 📥 копируем данные
             for row in range(y1, y2 + 1):
                 src_cell = source_sheet.cell(row=row, column=x)
                 tgt_cell = ws.cell(row=row - y1 + 1, column=4, value=src_cell.value)

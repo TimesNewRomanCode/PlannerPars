@@ -1,11 +1,11 @@
 import requests
 
-def send_group(data: list):
-    url = "http://localhost:8000/api/parser"
+def send_group(groups_ary: list, address_name: str):
+    url = "http://localhost:8000/api/get_groups/"
 
     response = requests.post(
         url,
-        json={"items": data},
+        json={"GroupsList": groups_ary, "AddressName": address_name},
         timeout=10,
     )
 

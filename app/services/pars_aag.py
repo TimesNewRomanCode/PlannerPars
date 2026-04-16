@@ -23,7 +23,7 @@ class AAGParser:
             "ул.Германа Титова 8": "https://altag.ru/student/schedule/rescheduling-3",
         }
 
-        self.GROUPS_NAME = []
+        self.GROUPS_NAME = set()
 
         self.GROUP_REGEX = re.compile(r"[А-ЯA-ZА-яЁё]{1,3}[-–]?\d{2,4}")
 
@@ -76,7 +76,7 @@ class AAGParser:
 
                             if cell and self.GROUP_REGEX.fullmatch(cell.strip()):
                                 group = cell.strip().replace("–", "-")
-                                self.GROUPS_NAME.append(group)
+                                self.GROUPS_NAME.add(group)  # Изменено: add вместо append
                                 result = []
 
                                 subject_col = col
@@ -192,7 +192,7 @@ class AAGParser:
         session.headers.update({"User-Agent": "Mozilla/5.0"})
 
         for site_folder, url in self.SITES.items():
-
+            self.GROUPS_NAME = set()  # Очищаем set для нового сайта
             pdf_links = self.get_pdf_links(url, session)
 
             for pdf_url, day in pdf_links:
@@ -227,16 +227,16 @@ class AAGParser:
 
                 os.remove(file_name)
 
-            data = self.GROUPS_NAME
+            groups_ary = list(self.GROUPS_NAME)
 
             try:
-                send_group(data)
-                self.GROUPS_NAME = []
-
+                send_group(groups_ary, address_name=site_folder)
             except Exception:
-                print("Не удалось отправить")
-                self.GROUPS_NAME = []
 
+                print("Не удалось отправить")
+            finally:
+
+                self.GROUPS_NAME = set()
 
 
 parse_aag = AAGParser()
