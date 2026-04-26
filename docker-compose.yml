@@ -26,6 +26,7 @@ services:
     restart: unless-stopped
     networks:
       - internal
+      - shared-network
 
 volumes:
   minio_data:
