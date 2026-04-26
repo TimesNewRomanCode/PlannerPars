@@ -209,10 +209,10 @@ class ParsAask:
 
                     cropped = img.crop(
                         (
-                            int(width * 0.15),
-                            0,
-                            width - int(width * 0.3),
-                            height - int(height * 0.10),
+                            int(width * 0.33),               # left: отступ слева от ширины
+                            0,                               # upper: начинаем с самого верха (0px)
+                            width - int(width * 0.15),        # right: обрезаем справа % ширины
+                            height - int(height * 0.10),     # lower: обрезаем снизу % высоты
                         )
                     )
 
