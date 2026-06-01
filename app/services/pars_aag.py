@@ -29,9 +29,7 @@ class AAGParser:
 
         self.BASE_DIR = Path(__file__).resolve().parents[3]
 
-        self.TODAY = datetime.today()
-
-    def get_pdf_links(self, page_url, session):
+    def get_pdf_links(self, page_url, session, current_date):
         response = session.get(page_url, timeout=(5, 30))
         response.raise_for_status()
 
@@ -39,7 +37,6 @@ class AAGParser:
         links = tree.xpath("//a[contains(@href, '.pdf')]")
 
         valid_dates = []
-        current_date = self.TODAY
 
         check_days = []
         d = current_date
@@ -190,16 +187,17 @@ class AAGParser:
     async def run(self):
         session = requests.Session()
         session.headers.update({"User-Agent": "Mozilla/5.0"})
+        today = datetime.today()
 
         for site_folder, url in self.SITES.items():
             self.GROUPS_NAME = set()  # Очищаем set для нового сайта
-            pdf_links = self.get_pdf_links(url, session)
+            pdf_links = self.get_pdf_links(url, session, today)
 
             for pdf_url, day in pdf_links:
                 print(f"[INFO] Обработка {pdf_url}")
 
-                target_date = self.TODAY.replace(day=day)
-                if day < self.TODAY.day:
+                target_date = today.replace(day=day)
+                if day < today.day:
                     target_date = target_date + timedelta(days=30)
 
                 day_month = f"{target_date.day}{target_date.month:02d}"
