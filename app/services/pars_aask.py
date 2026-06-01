@@ -24,38 +24,43 @@ class ParsAask:
 
     async def download_and_generate_schedule(self, manual_url: str = None):
         today = datetime.now()
-        if today.weekday() == 6:
-            today += timedelta(days=1)
+        all_group_names = set()
 
-        i = 0
+        for day_offset in range(7):
+            target_day = today + timedelta(days=day_offset)
+            day_month = int(target_day.strftime("%d%m"))
 
-        while True:
+            if manual_url:
+                url = manual_url
+                manual_url = None
+            else:
+                url = f"https://altask.ru/images/raspisanie/DO/{day_month}.xls"
+
+            file_path = f"{day_month}.xls"
+
             try:
-                target_day = today + timedelta(days=i)
-                day_month = int(target_day.strftime("%d%m"))
+                response = requests.get(url, timeout=(5, 30))
+                response.raise_for_status()
 
-                if manual_url:
-                    url = manual_url
-                    manual_url = None
-                else:
-                    url = f"https://altask.ru/images/raspisanie/DO/{day_month}.xls"
-
-                response = requests.get(url)
-
-                file_path = f"{day_month}.xls"
                 with open(file_path, "wb") as f:
                     f.write(response.content)
 
                 await self.extract_group_names_from_xls(file_path)
-
+                all_group_names.update(self.GROUP_NAMES)
                 self.parse_and_generate_tables(file_path, day_month)
 
-                i += 1
+            except Exception as e:
+                print(f"[INFO] Расписание на {target_day:%d.%m.%Y} пропущено: {e}")
+            finally:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
 
-            except Exception:
-                groups_ary = list(set(self.GROUP_NAMES))
-                send_group(groups_ary, address_name="пр.Ленина 68")
-                break
+                xlsx_path = f"{file_path}x"
+                if os.path.exists(xlsx_path):
+                    os.remove(xlsx_path)
+
+        self.GROUP_NAMES = sorted(all_group_names, key=lambda x: x.lower())
+        send_group(self.GROUP_NAMES, address_name="пр.Ленина 68")
 
     async def extract_group_names_from_xls(self, file_path):
         group_pattern = re.compile(r"^[А-Яа-яA-Za-z]+-\d{2}$")
@@ -228,7 +233,8 @@ class ParsAask:
                     os.remove(temp_pdf)
 
     def parse_and_generate_tables(self, input_xls, day_month):
-        self.convert_xls_to_xlsx(input_xls)
+        if not self.convert_xls_to_xlsx(input_xls):
+            raise RuntimeError("Не удалось преобразовать XLS в XLSX")
 
         groups = self.read_xls_file(input_xls)
 
@@ -236,12 +242,6 @@ class ParsAask:
         sheet = workbook.active
 
         self.create_group_sheets_single_column(groups, sheet, day_month)
-
-        if os.path.exists(input_xls):
-            os.remove(input_xls)
-
-        if os.path.exists(f"{input_xls}x"):
-            os.remove(f"{input_xls}x")
 
         print("[INFO] Обработка завершена")
 
