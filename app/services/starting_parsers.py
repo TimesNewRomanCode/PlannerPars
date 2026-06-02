@@ -33,7 +33,7 @@ class ParserWorker:
     def setup_jobs(self):
         self.scheduler.add_job(
             self.run_all_parsers,
-            CronTrigger(hour=19, minute=1),
+            CronTrigger(hour=12, minute=1),
             name="daily_parsing",
         )
 
